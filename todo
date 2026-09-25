@@ -1,0 +1,331 @@
+But there are 5 important problems
+1. Your client is still determining the actual result
+This is the biggest architectural issue.
+In app.ts:
+const hashHex = await sha256Hex(`${resolveData.blockhash}:${state.roundId}`);
+const seed = parseInt(hashHex.slice(0, 8), 16) >>> 0;
+
+generateBoardFromSeed(seed);
+
+Then:
+if (poisonSet.has(index)) {
+    declareLoss(level);
+}
+
+The browser is therefore deciding:
+"This cell is poison."
+
+The server has the same logic, but the client is still the authority for the displayed game result.
+For a real-money/token game, you want:
+CLIENT
+  ↓
+"I choose cell 3"
+  ↓
+SERVER
+  ↓
+Solana blockhash
+  ↓
+fairness.ts
+  ↓
+WIN / LOSS
+  ↓
+CLIENT displays result
+
+Not:
+CLIENT
+  ↓
+calculate poison
+  ↓
+decide WIN/LOSS
+
+2. Your "verification" isn't fully independent
+Your current verification does this:
+const record = rounds.get(String(body.roundId || ""));
+
+Then:
+connection.getBlock(record.targetSlot)
+
+So the verifier depends on the server's stored:
+roundId
+targetSlot
+blockhash
+
+That's okay for a server verification endpoint, but it isn't really an independent public verifier.
+A proper public verifier should be able to take:
+Round ID
+Solana slot
+Player choice
+
+and independently calculate:
+blockhash
+      ↓
+SHA256(blockhash:roundId)
+      ↓
+poison cells
+      ↓
+WIN/LOSS
+
+Your fairness.ts is already structured nicely for this.
+3. Your round only gets randomness once — this part is actually good
+I initially expected your code to generate a new Solana block for every level.
+But because of:
+if (state.randomnessResolved) {
+    return;
+}
+
+you only call /resolve once.
+So the actual flow is:
+Level 1 choice
+     ↓
+Solana block
+     ↓
+ONE seed
+     ↓
+Generate all 10 levels
+     ↓
+Level 2 uses same board
+     ↓
+Level 3 uses same board
+     ↓
+...
+     ↓
+Level 10
+
+That's exactly what you want if the intention is one random board per round.
+Good.
+4. ROUND_OFFSET = 3 is your main fairness/security weakness
+You currently do:
+const currentSlot = await connection.getSlot("confirmed");
+
+targetSlot: currentSlot + ROUND_OFFSET
+
+with:
+ROUND_OFFSET = 3;
+
+So:
+Player clicks
+      ↓
+Server receives request
+      ↓
+Server picks current + 3
+      ↓
+wait
+      ↓
+blockhash
+
+The problem isn't that +3 is mathematically wrong.
+The important issue is that your server chooses the future slot after receiving the player's choice.
+For a serious wagering system, you want the randomness commitment/selection mechanism to be much harder for any party to influence.
+For your current POC, it's acceptable.
+For production money:
+don't treat this blockhash approach as sufficient provable randomness.
+Use a proper VRF/oracle or an on-chain randomness mechanism.
+5. Your payout is entirely client-side
+This is a much bigger issue if you're actually going to stake your token.
+You currently do:
+state.finalPayout =
+    getCurrentPayout();
+
+and cashout:
+function handleCashOut() {
+    ...
+    state.finalPayout = payout;
+    state.status = "cashed_out";
+}
+
+That means:
+Cash Out
+   ↓
+browser changes state
+   ↓
+browser says payout = X
+
+There is no actual settlement.
+For a token casino, the eventual architecture needs:
+Player wallet
+     ↓
+stake transaction
+     ↓
+game program
+     ↓
+round locked
+     ↓
+randomness resolved
+     ↓
+WIN
+     ↓
+cashout transaction
+     ↓
+program verifies state
+     ↓
+token payout
+
+The browser should never be trusted to say:
+"Pay me 349.68x."
+
+Your fairness.ts is actually the cleanest part
+I would keep this general structure:
+blockhash + roundId
+        ↓
+SHA256
+        ↓
+hashHex
+        ↓
+seed
+        ↓
+Fisher-Yates
+        ↓
+poison cells
+
+And:
+export function outcomeForChoice(
+  poisonCells: Set<number>,
+  choice: number
+): Outcome {
+  return poisonCells.has(choice - 1)
+    ? "LOSS"
+    : "WIN";
+}
+
+The 1–5 public choice → 0–4 internal index conversion is consistent.
+That's good.
+What I would change
+Your architecture should become:
+                 ┌──────────────────┐
+                 │     CLIENT       │
+                 │                  │
+                 │ Choose cell 1-5  │
+                 └────────┬─────────┘
+                          │
+                          ▼
+                 ┌──────────────────┐
+                 │     SERVER       │
+                 │                  │
+                 │ Lock round       │
+                 │ Record choice    │
+                 └────────┬─────────┘
+                          │
+                          ▼
+                 ┌──────────────────┐
+                 │ SOLANA           │
+                 │                  │
+                 │ Future block     │
+                 │ blockhash        │
+                 └────────┬─────────┘
+                          │
+                          ▼
+                 ┌──────────────────┐
+                 │ fairness.ts      │
+                 │                  │
+                 │ SHA256           │
+                 │ seed             │
+                 │ shuffle          │
+                 │ poison cells     │
+                 └────────┬─────────┘
+                          │
+                          ▼
+                    WIN / LOSS
+                          │
+                          ▼
+                 ┌──────────────────┐
+                 │     CLIENT       │
+                 │                  │
+                 │ Show animation   │
+                 └──────────────────┘
+
+The important change is:
+server determines the result; client renders it.
+One more important thing: your current server doesn't actually enforce the game
+For example, /api/rounds/resolve returns:
+{
+  roundId,
+  targetSlot,
+  blockhash
+}
+
+It doesn't return:
+WIN
+LOSS
+
+The client then calculates that itself.
+I'd change that.
+Something like:
+{
+  roundId,
+  level,
+  choice,
+  targetSlot,
+  blockhash,
+  outcome,
+  poisonCells
+}
+
+Then the client simply does:
+response.outcome === "WIN"
+
+and renders the appropriate animation.
+You can optionally not expose all poison cells immediately if you want the UI to reveal only the selected cell.
+Recommended division
+fairness.ts
+Only deterministic fairness logic:
+blockhash
+roundId
+↓
+hash
+↓
+seed
+↓
+poison positions
+↓
+outcome
+
+server.ts
+Game authority:
+round creation
+choice locking
+Solana slot
+blockhash
+fairness calculation
+WIN/LOSS
+round state
+cashout authorization
+
+app.ts
+UI only:
+buttons
+animations
+board
+wallet
+messages
+display payout
+fairness UI
+
+Eventually Solana program
+Money authority:
+stake
+escrow
+round state
+randomness proof
+win/loss
+cashout
+token transfer
+
+Bottom line
+Your fairness algorithm itself is coherent. The biggest thing to fix isn't fairness.ts; it's the trust boundary.
+Currently:
+Client calculates result
+Server can reproduce result
+
+You want:
+Server calculates result
+Client displays result
+
+And when real token staking is introduced:
+On-chain program controls money
+Server coordinates the game
+Client only presents it
+
+That's the direction I'd take before adding more UI or animations.
+
+
+the verify faitness is exposing all the results kije which tile is posioned fx that,

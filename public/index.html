@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pepe Fortune</title>
+    <link rel="stylesheet" href="styles.css?v=round-history-1" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="panel sidebar">
+        <div class="sidebar-top">
+          <div class="stack-control">
+            <label for="stakeInput">Stake</label>
+            <div class="stake-row">
+              <span class="currency">$</span>
+              <input id="stakeInput" type="number" min="1" step="1" value="10" />
+            </div>
+          </div>
+
+          <div class="payout-wrap">
+            <span class="mini-label">Potential Payout</span>
+            <strong id="payoutValue" class="payout-value">$12.30</strong>
+          </div>
+        </div>
+
+        <div class="stats-row">
+          <div class="stat-box">
+            <span class="mini-label">Round</span>
+            <strong id="roundValue">—</strong>
+          </div>
+          <div class="stat-box">
+            <span class="mini-label">Level</span>
+            <strong id="levelValue">1</strong>
+          </div>
+          <div class="stat-box">
+            <span class="mini-label">Multiplier</span>
+            <strong id="multiplierValue">1.23x</strong>
+          </div>
+        </div>
+
+        <div class="action-row">
+          <button id="startBtn" class="primary-btn">Start</button>
+          <button id="cashOutBtn" class="secondary-btn" disabled>Cash Out</button>
+        </div>
+
+        <div class="utility-row">
+          <button id="continueBtn" class="ghost-btn hidden">Continue</button>
+          <button id="verifyRoundBtn" class="link-btn">Verify Fairness</button>
+        </div>
+      </aside>
+
+      <main class="panel board-panel">
+        <div id="roundMessage" class="round-message neutral" aria-live="polite">
+          <p id="statusValue" class="status-message">Place a stake to begin.</p>
+        </div>
+        <div id="board" class="board" aria-live="polite"></div>
+      </main>
+    </div>
+
+    <div id="fairnessModal" class="modal hidden" aria-hidden="true">
+      <div class="modal-card">
+        <div class="modal-head">
+          <h3>Fairness Verification</h3>
+          <button id="closeFairnessModal" class="close-btn" type="button">×</button>
+        </div>
+
+        <div id="proofRounds" class="modal-body">
+          <p class="proof-empty">No round proof is available yet.</p>
+        </div>
+      </div>
+    </div>
+
+    <script src="app.js?v=typescript-1"></script>
+  </body>
+</html>
